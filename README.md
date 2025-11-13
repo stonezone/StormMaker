@@ -1,6 +1,8 @@
 # StormMaker / North Pacific Swell Lab
 
-Browser-based simulation that teaches how North Pacific storms light up Oʻahu’s North Shore. The MVP follows `docs/north_pacific_combined_project_spec.md` and focuses on a single-page canvas experience with editable storms, animated swell rings, and North Shore spot indicators.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Browser-based simulation that teaches how North Pacific storms light up Oʻahu's North Shore. The MVP follows `docs/north_pacific_combined_project_spec.md` and focuses on a single-page canvas experience with editable storms, animated swell rings, and North Shore spot indicators.
 
 ## Project Setup
 
@@ -23,13 +25,17 @@ The dev server exposes the app at http://localhost:5173 by default. Use the prev
 
 ## Usage Highlights
 
-- **Storms tab**: Add storms, drag them while paused, and edit heading/speed/power/wind.
+- **Storms tab**: Add storms, drag them while paused, edit heading/speed/power/wind, and delete selected storms when paused.
 - **Sites tab**: Live swell height + quality for Sunset, Pipeline, Waimea, Haleʻiwa.
 - **Scenario tab**: Load preset historical setups (Historic Major, Central West, Aleutian Low). Loading replaces storms, clears rings, and syncs the simulation clock.
 - **Controls**: Play/Pause (Space), Reset (R), Measure (M) toggles the overlay. Tooltips describe each control.
 - **Measure tool**: Click + drag on the canvas to view distance and bearing between two points.
 - **Help overlay**: Use the Help button for shortcuts and a quick link to the combined spec.
 - **macOS launcher**: See below for a one-click AppleScript app that starts/stops the dev server automatically.
+- **Simulation constants**: Base time acceleration (3,600× real time), directional swell sectors (120°), sampling tolerance (40 px around ring arc), and `MAX_RADIUS_KM = 6,000` keep physics and measure tool aligned.
+- **Diagnostics tab tuning**: Adjust time acceleration, swell sector width, sampling tolerance, ring speed, decay, min energy cutoff, spot energy cap, and storm vector visibility live while the sim runs (persisted + resettable). Diagnostics also show smoothed FPS and active-ring counts.
+- **Auto-pause on tab hide**: The sim pauses when the document is hidden and resumes only when you explicitly hit Play again, preventing runaway timelines in background tabs.
+- **Accessible tabs**: Primary tabs now expose proper `tablist` semantics—use Left/Right/Home/End (or click) to focus & activate panels with aria-selected/tabindex kept in sync.
 
 ## macOS Launcher
 
@@ -52,3 +58,14 @@ Repeated runs clean up any orphaned servers before launching, so you can treat t
 ## Development Roadmap
 
 Implementation phases mirror the spec (skeleton, storms, swell rings, scenarios, polish). Each phase is now represented in code: UI shell (Phase 1), storm interactions (Phase 2), swell rings & spot sampling (Phase 3), scenario loader with presets (Phase 4), and UX polish/accessibility (Phase 5).
+
+## Simulation Parameters
+
+| Constant | Default | Purpose |
+| --- | --- | --- |
+| `BASE_TIME_ACCELERATION` | 3600 | Simulated hours per real hour (scaled by speed slider). Tunable live in the DIAG panel and persisted for the session. |
+| `RING_SECTOR_WIDTH_DEG` | 120° | Angular width of each swell lobe when rendered/sampled. Tunable live (persisted) and resettable. |
+| `RING_SAMPLE_TOLERANCE_PX` | 40 px | Pixel buffer between spot distance and ring radius for energy sampling. Tunable live (persisted). |
+| `MAX_RADIUS_KM` | 6000 km | Map-wide normalization for swell radius + measure tool distances. |
+
+Adjust these constants in `src/main.js` / `src/physics/swell.js` for different pacing or visualization needs.
