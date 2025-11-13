@@ -1,0 +1,57 @@
+:root {
+  --color-ocean-base: #87ceeb;
+  --color-ocean-deep: #1e5f74;
+  --color-panel-bg: #e8f4f8;
+  --color-border: #b0bec5;
+  --color-text-main: #2c3e50;
+  --color-text-muted: #6b7280;
+  --color-primary: #2196f3;
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-danger: #f44336;
+  --color-accent-teal: #00bcd4;
+  --color-accent-coral: #ff6b6b;
+  --color-accent-yellow: #ffd93d;
+
+  --font-heading: "Poppins", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Open Sans", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --shadow-soft: 0 10px 30px rgba(33, 150, 243, 0.12);
+  --radius-panel: 18px;
+  --radius-button: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f2fbff 0%, #cbe7f5 60%, #a7d7eb 100%);
+  color: var(--color-text-main);
+  font-family: var(--font-body);
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+a:hover,
+a:focus-visible {
+  text-decoration: underline;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(33, 150, 243, 0.6);
+  outline-offset: 2px;
+}

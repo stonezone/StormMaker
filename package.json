@@ -1,0 +1,25 @@
+{
+  "name": "stormmaker",
+  "version": "0.1.0",
+  "description": "North Pacific storm simulation MVP",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "launcher:run": "osascript tools/StormMakerLauncher.applescript",
+    "launcher:build": "mkdir -p mac && osacompile -o \"mac/StormMaker Launcher.app\" tools/StormMakerLauncher.applescript"
+  },
+  "keywords": [
+    "simulation",
+    "canvas",
+    "education"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "vite": "~7.2.2",
+    "vitest": "~2.1.9"
+  }
+}

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StormMaker • North Shore Swell Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand__title">North Shore Swell Lab</span>
+          <span class="brand__tagline">
+            StormMaker MVP • Educational sandbox ·
+            <a href="/docs/north_pacific_combined_project_spec.md" target="_blank" rel="noreferrer">Spec</a>
+          </span>
+        </div>
+        <nav class="primary-tabs" aria-label="Primary sections" role="tablist">
+          <button class="tab active" data-tab="storms" role="tab" aria-selected="true" aria-controls="panel-storms">Storms</button>
+          <button class="tab" data-tab="sites" role="tab" aria-controls="panel-sites">Sites</button>
+          <button class="tab" data-tab="env" role="tab" aria-controls="panel-env">Env</button>
+          <button class="tab" data-tab="scenario" role="tab" aria-controls="panel-scenario">Scenario</button>
+          <button class="tab" data-tab="diag" role="tab" aria-controls="panel-diag">Diag</button>
+        </nav>
+      </header>
+
+      <main class="app-main">
+        <section class="canvas-panel" aria-label="North Pacific map">
+          <canvas id="storm-canvas"></canvas>
+        </section>
+
+        <aside class="side-panel">
+          <article class="panel-card storms-panel" data-panel="storms" role="tabpanel" id="panel-storms">
+            <div class="panel-card__header">
+              <h3>Storms</h3>
+              <div class="panel-actions">
+                <button class="chip-button" type="button" data-add-storm data-tooltip="Click, then tap on the map to place a storm">Add Storm</button>
+                <span class="placing-indicator" data-placing-indicator hidden>Click map…</span>
+              </div>
+            </div>
+            <ul class="panel-list" data-storm-list></ul>
+            <div class="storm-form" data-storm-form hidden>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Heading (°)</span>
+                  <input type="number" min="0" max="359" step="1" name="headingDeg" />
+                </label>
+                <label class="form-field">
+                  <span>Speed (units/hr)</span>
+                  <input type="number" min="0" step="0.1" name="speedUnits" />
+                </label>
+                <label class="form-field">
+                  <span>Power (0-10)</span>
+                  <input type="number" min="0" max="10" step="0.1" name="power" />
+                </label>
+                <label class="form-field">
+                  <span>Wind (kts)</span>
+                  <input type="number" min="0" step="1" name="windKts" />
+                </label>
+                <label class="form-field">
+                  <span>X Pos</span>
+                  <input type="number" min="0" max="1" step="0.01" name="x" />
+                </label>
+                <label class="form-field">
+                  <span>Y Pos</span>
+                  <input type="number" min="0" max="1" step="0.01" name="y" />
+                </label>
+              </div>
+            </div>
+            <div class="empty-state" data-empty-state>No storms yet. Tap Add Storm to place one.</div>
+          </article>
+
+          <article class="panel-card" data-panel="sites" role="tabpanel" id="panel-sites" hidden>
+            <h3>North Shore Spots</h3>
+            <ul class="panel-list" data-spot-list></ul>
+          </article>
+
+          <article class="panel-card" data-panel="scenario" role="tabpanel" id="panel-scenario" hidden>
+            <h3>Scenarios</h3>
+            <p>Select a preset to auto-populate storm positions and parameters.</p>
+            <ul class="panel-list" data-scenario-list></ul>
+          </article>
+
+          <article class="panel-card" data-panel="env" role="tabpanel" id="panel-env" hidden>
+            <h3>Environment</h3>
+            <p class="empty-state">Global environment tuning (season, trade winds) will plug in later phases.</p>
+          </article>
+
+          <article class="panel-card" data-panel="diag" role="tabpanel" id="panel-diag" hidden>
+            <h3>Diagnostics</h3>
+            <p class="empty-state">Frame time: <span data-frame-time>-- ms</span> · Rings tracked: <span data-ring-count>0</span></p>
+          </article>
+        </aside>
+      </main>
+
+      <footer class="control-bar">
+        <div class="control-group">
+          <button class="control-button play" type="button" data-tooltip="Spacebar also toggles play">Play</button>
+          <button class="control-button pause" type="button" data-tooltip="Pause simulation">Pause</button>
+          <button class="control-button reset" type="button" data-tooltip="Clear rings and rewind time">Reset</button>
+          <button class="control-button measure" type="button" data-tooltip="Toggle distance measurement">Measure</button>
+        </div>
+
+        <div class="control-status">
+          <span class="time-label">T+ <span id="sim-time">0.0</span> h</span>
+          <div class="speed-control">
+            <label>
+              Speed <span data-speed-label>1.0x</span>
+              <input id="speed-control" type="range" min="0.5" max="3" step="0.1" value="1" />
+            </label>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
