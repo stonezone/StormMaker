@@ -25,6 +25,7 @@ import {
   setSpotEnergyCap,
   setShowStormVectors,
   setSpotEnergySmoothingAlpha,
+  resetSimConfig,
   MAX_RADIUS_KM
 } from "./config/simConfig.js";
 import {
@@ -263,7 +264,7 @@ function hookControls() {
 
   addListener(resetButton, "click", () => {
     resetClock();
-    clearRings();
+    resetSimulationState();
   });
 
   addListener(measureButton, "click", () => {
@@ -290,9 +291,8 @@ function hookControls() {
     const scenario = loadScenario(button.dataset.scenarioId);
     if (scenario) {
       replaceStorms(scenario.storms);
-      clearRings();
-      simState.lastUpdateHours = scenario.initialTimeHours;
       setClockHours(scenario.initialTimeHours);
+      resetSimulationState();
       // Spec requirement: loading a scenario must pause the simulation
       pause();
     }
@@ -305,7 +305,7 @@ function hookControls() {
     }
     if (event.key.toLowerCase() === "r") {
       resetClock();
-      simState.rings = [];
+      resetSimulationState();
     }
     if (event.key.toLowerCase() === "m") {
       measureButton?.click();
@@ -591,9 +591,12 @@ function updateRings(clockHours) {
     }
   });
 
-  // Emit rings from storms
-  stormSnapshot.storms.forEach((storm) => {
-    const lastEmission = simState.stormEmissionTimes.get(storm.id) || 0;
+  // Get updated storm positions after movement
+  const movedSnapshot = getStormSnapshot();
+
+  // Emit rings from storms (using updated positions)
+  movedSnapshot.storms.forEach((storm) => {
+    const lastEmission = simState.stormEmissionTimes.get(storm.id);
     if (shouldEmitRing(storm, clockHours, lastEmission)) {
       simState.stormEmissionTimes.set(storm.id, clockHours);
       storm.lastEmission = clockHours;
@@ -608,8 +611,11 @@ function updateRings(clockHours) {
 
 function updateSpots() {
   const canvasSize = { width: viewport.cssWidth, height: viewport.cssHeight };
+  const { spotEnergySmoothingAlpha } = getSimConfig();
+  const alpha = spotEnergySmoothingAlpha;
+
   spots.forEach((spot) => {
-    const energy = sampleSpotEnergy(
+    const raw = sampleSpotEnergy(
       {
         x: spot.x,
         y: spot.y,
@@ -619,8 +625,13 @@ function updateSpots() {
       simState.rings,
       canvasSize
     );
-    spot.currentHeight = energy;
-    spot.currentQuality = classifyHeight(energy);
+
+    // Exponential smoothing: smoothed = alpha * raw + (1 - alpha) * prev
+    const prev = spot.smoothedHeight ?? 0;
+    const smoothed = alpha * raw + (1 - alpha) * prev;
+    spot.smoothedHeight = smoothed;
+    spot.currentHeight = smoothed;
+    spot.currentQuality = classifyHeight(smoothed);
   });
 }
 
@@ -777,6 +788,14 @@ function clearRings() {
   resetRingEnergyCache(simState.rings);
   resetRingEnergyCacheStats();
   simState.rings = [];
+}
+
+function resetSimulationState() {
+  resetRingEnergyCache(simState.rings);
+  resetRingEnergyCacheStats();
+  simState.rings = [];
+  simState.stormEmissionTimes.clear();
+  simState.lastUpdateHours = getClockSnapshot().hours;
 }
 
 function handleVisibilityChange() {
