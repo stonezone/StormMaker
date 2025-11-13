@@ -9,6 +9,7 @@ export const spots = [
     preferredMin: 300,
     preferredMax: 320,
     currentHeight: 0,
+    smoothedHeight: 0,
     currentQuality: "Flat"
   },
   {
@@ -21,6 +22,7 @@ export const spots = [
     preferredMin: 305,
     preferredMax: 330,
     currentHeight: 0,
+    smoothedHeight: 0,
     currentQuality: "Flat"
   },
   {
@@ -33,6 +35,7 @@ export const spots = [
     preferredMin: 320,
     preferredMax: 340,
     currentHeight: 0,
+    smoothedHeight: 0,
     currentQuality: "Flat"
   },
   {
@@ -45,6 +48,7 @@ export const spots = [
     preferredMin: 285,
     preferredMax: 310,
     currentHeight: 0,
+    smoothedHeight: 0,
     currentQuality: "Flat"
   }
 ];

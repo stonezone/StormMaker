@@ -1,4 +1,5 @@
-import { computeRingEnergy, MAX_RADIUS_KM } from "../physics/swell.js";
+import { getRingEnergyCached } from "../physics/swell.js";
+import { getSimConfig, MAX_RADIUS_KM } from "../config/simConfig.js";
 
 const COAST_FILL = "rgba(238, 232, 213, 0.7)";
 const COAST_STROKE = "rgba(44, 62, 80, 0.12)";
@@ -173,18 +174,29 @@ function drawHawaiiInset(ctx, width, height, palette) {
 
 function drawRings(ctx, width, height, rings) {
   rings.forEach((ring) => {
-    const energy = computeRingEnergy(ring);
+    if (!ring.active) return;
+    const energy = getRingEnergyCached(ring);
     const opacity = Math.max(0.15, Math.min(0.85, energy / 8));
+    const minDim = Math.min(width, height);
+    const radiusPx = (ring.radiusKm / MAX_RADIUS_KM) * minDim;
+    const centerX = ring.x * width;
+    const centerY = ring.y * height;
+    const { ringSectorWidthDeg } = getSimConfig();
+    const halfSector = (ringSectorWidthDeg / 2) * (Math.PI / 180);
+    const headingRad = ((ring.headingDeg ?? 0) * Math.PI) / 180;
+    const startAngle = headingRad - halfSector;
+    const endAngle = headingRad + halfSector;
+
     ctx.beginPath();
     ctx.strokeStyle = `rgba(255, 255, 255, ${opacity.toFixed(2)})`;
     ctx.lineWidth = 1 + energy * 0.2;
-    const radiusPx = (ring.radiusKm / MAX_RADIUS_KM) * width;
-    ctx.arc(ring.x * width, ring.y * height, radiusPx, 0, Math.PI * 2);
+    ctx.arc(centerX, centerY, radiusPx, startAngle, endAngle);
     ctx.stroke();
   });
 }
 
 function drawStorms(ctx, width, height, storms, selectedId, palette) {
+  const { showStormVectors } = getSimConfig();
   storms.forEach((storm) => {
     const x = storm.x * width;
     const y = storm.y * height;
@@ -202,13 +214,9 @@ function drawStorms(ctx, width, height, storms, selectedId, palette) {
     ctx.arc(x, y, 10, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 2;
-    const headingRad = (storm.headingDeg * Math.PI) / 180;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(headingRad) * 30, y + Math.sin(headingRad) * 30);
-    ctx.stroke();
+    if (showStormVectors) {
+      drawStormVector(ctx, x, y, storm.headingDeg, storm.speedUnits);
+    }
 
     ctx.fillStyle = "white";
     ctx.font = "600 12px " + headingFontStack;
@@ -217,6 +225,31 @@ function drawStorms(ctx, width, height, storms, selectedId, palette) {
     ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.fillText(`Pwr ${storm.power.toFixed(1)} • ${storm.headingDeg.toFixed(0)}°`, x + 12, y + 4);
   });
+}
+
+function drawStormVector(ctx, x, y, headingDeg, speedUnits = 0) {
+  const baseLength = 20;
+  const speedScale = Math.min(1, Math.max(0, speedUnits / 15));
+  const length = baseLength + speedScale * 40;
+  const headingRad = (headingDeg * Math.PI) / 180;
+  const endX = x + Math.cos(headingRad) * length;
+  const endY = y + Math.sin(headingRad) * length;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  const arrowSize = 6;
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - Math.cos(headingRad - Math.PI / 6) * arrowSize, endY - Math.sin(headingRad - Math.PI / 6) * arrowSize);
+  ctx.lineTo(endX - Math.cos(headingRad + Math.PI / 6) * arrowSize, endY - Math.sin(headingRad + Math.PI / 6) * arrowSize);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.fill();
 }
 
 function drawSpots(ctx, width, height, spots, palette) {

@@ -34,7 +34,12 @@ export function getSnapshot() {
 export function subscribe(listener) {
   listeners.add(listener);
   listener(getSnapshot());
-  return () => listeners.delete(listener);
+  let unsubscribed = false;
+  return () => {
+    if (unsubscribed) return;
+    unsubscribed = true;
+    listeners.delete(listener);
+  };
 }
 
 export function beginPlacement() {
@@ -95,6 +100,24 @@ export function updateStorm(id, updates) {
   }
   if (typeof updates.name === "string" && updates.name.trim().length) {
     storm.name = updates.name.slice(0, 40);
+  }
+  if (isFiniteNumber(updates.lastEmission)) {
+    storm.lastEmission = updates.lastEmission;
+  }
+  emit();
+}
+
+export function deleteStorm(id) {
+  const index = state.storms.findIndex((storm) => storm.id === id);
+  if (index === -1) return;
+  state.storms.splice(index, 1);
+  if (state.selectedId === id) {
+    if (state.storms.length === 0) {
+      state.selectedId = null;
+    } else {
+      const nextIndex = Math.min(index, state.storms.length - 1);
+      state.selectedId = state.storms[nextIndex].id;
+    }
   }
   emit();
 }

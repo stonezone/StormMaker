@@ -1,36 +1,42 @@
+import { getSimConfig, MAX_RADIUS_KM } from "../config/simConfig.js";
+
+const energyCacheStats = {
+  hits: 0,
+  misses: 0
+};
+
 export const EMISSION_INTERVAL_HOURS = 3;
-const BASE_PROPAGATION_SPEED = 500; // km per simulated hour
-export const MAX_RADIUS_KM = 6000;
-const BASE_DECAY = 0.0004;
-const MIN_ACTIVE_ENERGY = 0.05;
-const MAX_SPOT_ENERGY = 10;
-const RING_SAMPLE_TOLERANCE_PX = 40;
 
 export function createRing(storm, currentHours) {
+  const { ringPropagationSpeedKmH, ringDecayRatePerKm } = getSimConfig();
   return {
     id: `${storm.id}-${currentHours}`,
     stormId: storm.id,
     emittedAt: currentHours,
     x: storm.x,
     y: storm.y,
+    headingDeg: storm.headingDeg ?? 0,
     radiusKm: 0,
-    propagationSpeed: BASE_PROPAGATION_SPEED * (0.4 + storm.power / 10),
+    propagationSpeed: ringPropagationSpeedKmH * (0.4 + storm.power / 10),
     baseEnergy: storm.power * 2,
-    decayRate: BASE_DECAY,
+    decayRate: ringDecayRatePerKm,
     active: true
   };
 }
 
-export function shouldEmitRing(storm, currentTime, lastEmission = 0) {
+export function shouldEmitRing(storm, currentTime, lastEmission = undefined) {
   if (!storm.active) return false;
-  if (lastEmission === 0) return true;
-  return currentTime - lastEmission >= EMISSION_INTERVAL_HOURS;
+  const previous = Number.isFinite(lastEmission) ? lastEmission : storm.lastEmission;
+  if (!Number.isFinite(previous)) return true;
+  return currentTime - previous >= EMISSION_INTERVAL_HOURS;
 }
 
 export function advanceRing(ring, dtHours) {
   ring.radiusKm += ring.propagationSpeed * dtHours;
   const energy = computeRingEnergy(ring);
-  if (ring.radiusKm > MAX_RADIUS_KM || energy < MIN_ACTIVE_ENERGY) {
+  ring._cachedEnergy = energy;
+  const { ringMinActiveEnergy } = getSimConfig();
+  if (ring.radiusKm > MAX_RADIUS_KM || energy < ringMinActiveEnergy) {
     ring.active = false;
   }
 }
@@ -75,30 +81,74 @@ export function directionalWeight(directionDeg, minDeg, maxDeg) {
 
 export function sampleSpotEnergy(spot, rings, canvasSize) {
   let total = 0;
+  const { ringSampleTolerancePx, ringSectorWidthDeg, spotEnergyCap } = getSimConfig();
+  const halfSector = Math.max(10, ringSectorWidthDeg / 2);
   rings.forEach((ring) => {
     if (!ring.active) return;
-    const dx = spot.x - ring.x;
-    const dy = spot.y - ring.y;
-    const distance = Math.hypot(dx, dy);
-    const radiusNormalized = ring.radiusKm / MAX_RADIUS_KM;
-    const normalizedTolerance = RING_SAMPLE_TOLERANCE_PX / Math.max(canvasSize.width, canvasSize.height);
-    if (Math.abs(distance - radiusNormalized) <= normalizedTolerance) {
-      const direction = bearingFromNorth(dx, dy);
-      const weight = directionalWeight(direction, spot.preferredMin, spot.preferredMax);
-      total += computeRingEnergy(ring) * weight;
+    const dxCss = (spot.x - ring.x) * canvasSize.width;
+    const dyCss = (spot.y - ring.y) * canvasSize.height;
+    const distanceCss = Math.hypot(dxCss, dyCss);
+    const radiusCss = (ring.radiusKm / MAX_RADIUS_KM) * Math.min(canvasSize.width, canvasSize.height);
+    if (Math.abs(distanceCss - radiusCss) <= ringSampleTolerancePx) {
+      const direction = bearingFromNorth(dxCss, dyCss);
+      const sectorWeight = directionalFalloff(direction, ring.headingDeg ?? 0, halfSector);
+      if (sectorWeight <= 0) return;
+      const preferredWeight = directionalWeight(direction, spot.preferredMin, spot.preferredMax);
+      total += getRingEnergyCached(ring) * sectorWeight * preferredWeight;
     }
   });
 
-  return Math.min(total, MAX_SPOT_ENERGY);
+  return Math.min(total, spotEnergyCap);
 }
 
-function bearingFromNorth(dx, dy) {
+export function bearingFromNorth(dx, dy) {
   return ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
 }
 
+export function directionalFalloff(angleDeg, centerDeg, halfWidthDeg) {
+  const diff = angularDifference(angleDeg, centerDeg);
+  const spread = Math.max(5, halfWidthDeg);
+  const sigma = spread / Math.SQRT2;
+  // Gaussian-style falloff: ~1 at center, rapidly decays but never hits zero.
+  return Math.exp(-((diff * diff) / (2 * sigma * sigma)));
+}
+
+function angularDifference(a, b) {
+  let diff = (a - b + 540) % 360 - 180;
+  return Math.abs(diff);
+}
+
 export function classifyHeight(height) {
-  if (height < 0.5) return "Flat";
-  if (height < 2) return "Fun";
-  if (height < 4) return "Solid";
+  if (height < 0.3) return "Flat";
+  if (height < 1.5) return "Fun";
+  if (height < 3.5) return "Solid";
   return "XL";
+}
+
+export function getRingEnergyCached(ring) {
+  if (typeof ring._cachedEnergy === "number") {
+    energyCacheStats.hits += 1;
+    return ring._cachedEnergy;
+  }
+  energyCacheStats.misses += 1;
+  const energy = computeRingEnergy(ring);
+  ring._cachedEnergy = energy;
+  return energy;
+}
+
+export function resetRingEnergyCache(rings = []) {
+  rings.forEach((ring) => {
+    if (ring) {
+      ring._cachedEnergy = undefined;
+    }
+  });
+}
+
+export function getRingEnergyCacheStats() {
+  return energyCacheStats;
+}
+
+export function resetRingEnergyCacheStats() {
+  energyCacheStats.hits = 0;
+  energyCacheStats.misses = 0;
 }

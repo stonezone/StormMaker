@@ -8,17 +8,25 @@ import {
   shouldEmitRing,
   advanceRing,
   sampleSpotEnergy,
-  classifyHeight
+  classifyHeight,
+  bearingFromNorth,
+  resetRingEnergyCache,
+  getRingEnergyCacheStats,
+  resetRingEnergyCacheStats
 } from "./physics/swell.js";
 import {
-  subscribe as subscribeStorms,
-  beginPlacement,
-  cancelPlacement,
-  addStormAt,
-  selectStorm,
-  updateStorm,
-  getSnapshot as getStormSnapshot
-} from "./state/stormStore.js";
+  getSimConfig,
+  setBaseTimeAcceleration,
+  setRingSectorWidthDeg,
+  setRingSampleTolerancePx,
+  setRingPropagationSpeedKmH,
+  setRingDecayRatePerKm,
+  setRingMinActiveEnergy,
+  setSpotEnergyCap,
+  setShowStormVectors,
+  setSpotEnergySmoothingAlpha,
+  MAX_RADIUS_KM
+} from "./config/simConfig.js";
 import {
   subscribeClock,
   setMultiplier,
@@ -29,7 +37,17 @@ import {
   getClockSnapshot,
   setClockHours
 } from "./state/simClock.js";
-import { replaceStorms } from "./state/stormStore.js";
+import {
+  subscribe as subscribeStorms,
+  beginPlacement,
+  cancelPlacement,
+  addStormAt,
+  selectStorm,
+  updateStorm,
+  deleteStorm,
+  getSnapshot as getStormSnapshot,
+  replaceStorms
+} from "./state/stormStore.js";
 import {
   subscribe as subscribeScenarioStore,
   loadScenario,
@@ -66,12 +84,55 @@ const measureButton = document.querySelector(".control-button.measure");
 
 const scenarioListEl = document.querySelector("[data-scenario-list]");
 const tabPanels = document.querySelectorAll("[data-panel]");
+const baseTimeInput = document.querySelector("[data-config-base-time]");
+const sectorInput = document.querySelector("[data-config-sector]");
+const sampleInput = document.querySelector("[data-config-sample]");
+const spotSmoothInput = document.querySelector("[data-config-spot-smoothing]");
+const propSpeedInput = document.querySelector("[data-config-prop-speed]");
+const decayInput = document.querySelector("[data-config-decay]");
+const minEnergyInput = document.querySelector("[data-config-min-energy]");
+const spotCapInput = document.querySelector("[data-config-spot-cap]");
+const stormVectorToggle = document.querySelector("[data-config-storm-vectors]");
+const deleteStormBtn = document.querySelector("[data-delete-storm]");
+const resetConfigBtn = document.querySelector("[data-config-reset]");
+const frameTimeEl = document.querySelector("[data-frame-time]");
+const frameFpsEl = document.querySelector("[data-frame-fps]");
+const ringCountEl = document.querySelector("[data-ring-count]");
+const cacheHitsEl = document.querySelector("[data-cache-hits]");
+const cacheMissesEl = document.querySelector("[data-cache-misses]");
+const cacheHitRateEl = document.querySelector("[data-cache-hit-rate]");
 
 const viewport = {
-  width: 0,
-  height: 0,
+  cssWidth: 0,
+  cssHeight: 0,
   dpr: window.devicePixelRatio || 1
 };
+
+const cleanupCallbacks = [];
+let initialized = false;
+
+function registerCleanup(fn) {
+  if (typeof fn === "function") {
+    cleanupCallbacks.push(fn);
+  }
+}
+
+function runCleanup() {
+  while (cleanupCallbacks.length) {
+    const fn = cleanupCallbacks.pop();
+    try {
+      fn();
+    } catch (err) {
+      console.warn("Cleanup error", err);
+    }
+  }
+}
+
+function addListener(target, type, handler, options) {
+  if (!target?.addEventListener) return;
+  target.addEventListener(type, handler, options);
+  registerCleanup(() => target.removeEventListener(type, handler, options));
+}
 
 const simState = {
   rings: [],
@@ -81,6 +142,13 @@ const simState = {
   measureEnd: null,
   stormEmissionTimes: new Map() // Track lastEmission per storm ID
 };
+
+const diagnostics = {
+  fpsEma: null
+};
+
+let isPlaying = false;
+let wasPlayingBeforeHide = false;
 
 let animationId = null;
 
@@ -108,20 +176,30 @@ function populateSpotList() {
 
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
-  viewport.width = rect.width;
-  viewport.height = rect.height;
-  viewport.dpr = window.devicePixelRatio || 1;
+  viewport.cssWidth = rect.width;
+  viewport.cssHeight = rect.height;
+  viewport.dpr = Math.max(1, window.devicePixelRatio || 1);
 
-  canvas.width = rect.width * viewport.dpr;
-  canvas.height = rect.height * viewport.dpr;
+  const renderWidth = Math.round(rect.width * viewport.dpr);
+  const renderHeight = Math.round(rect.height * viewport.dpr);
+  if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+    canvas.width = renderWidth;
+    canvas.height = renderHeight;
+  }
+  canvas.style.width = `${rect.width}px`;
+  canvas.style.height = `${rect.height}px`;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(viewport.dpr, viewport.dpr);
 }
 
 function setActiveTab(button) {
   const tabName = button.dataset.tab;
-  tabButtons.forEach((tab) => tab.classList.remove("active"));
-  button.classList.add("active");
+  tabButtons.forEach((tab) => {
+    const isActive = tab === button;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    tab.setAttribute("tabindex", isActive ? "0" : "-1");
+  });
   tabPanels.forEach((panel) => {
     if (panel.dataset.panel === tabName) {
       panel.removeAttribute("hidden");
@@ -132,8 +210,31 @@ function setActiveTab(button) {
 }
 
 function hookTabs() {
-  tabButtons.forEach((button) => {
-    button.addEventListener("click", () => setActiveTab(button));
+  const tabsArray = Array.from(tabButtons);
+  tabsArray.forEach((button) => {
+    const isActive = button.classList.contains("active");
+    button.setAttribute("role", "tab");
+    button.setAttribute("tabindex", isActive ? "0" : "-1");
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    addListener(button, "click", () => setActiveTab(button));
+    addListener(button, "keydown", (event) => {
+      let nextIndex = null;
+      if (event.key === "ArrowRight") {
+        nextIndex = (tabsArray.indexOf(button) + 1) % tabsArray.length;
+      } else if (event.key === "ArrowLeft") {
+        nextIndex = (tabsArray.indexOf(button) - 1 + tabsArray.length) % tabsArray.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = tabsArray.length - 1;
+      }
+      if (nextIndex != null) {
+        event.preventDefault();
+        const targetTab = tabsArray[nextIndex];
+        setActiveTab(targetTab);
+        targetTab.focus();
+      }
+    });
   });
 }
 
@@ -143,29 +244,29 @@ function hookSpeedControl() {
     speedLabel.textContent = `${multiplier.toFixed(1)}x`;
     setMultiplier(multiplier);
   };
-  speedSlider.addEventListener("input", updateLabel);
+  addListener(speedSlider, "input", updateLabel);
   updateLabel();
 }
 
 function hookControls() {
-  addStormBtn?.addEventListener("click", () => {
+  addListener(addStormBtn, "click", () => {
     beginPlacement();
   });
 
-  playButton?.addEventListener("click", () => {
+  addListener(playButton, "click", () => {
     togglePlay();
   });
 
-  pauseButton?.addEventListener("click", () => {
+  addListener(pauseButton, "click", () => {
     pause();
   });
 
-  resetButton?.addEventListener("click", () => {
+  addListener(resetButton, "click", () => {
     resetClock();
-    simState.rings = [];
+    clearRings();
   });
 
-  measureButton?.addEventListener("click", () => {
+  addListener(measureButton, "click", () => {
     simState.measuring = !simState.measuring;
     if (!simState.measuring) {
       simState.measureStart = null;
@@ -174,7 +275,7 @@ function hookControls() {
     measureButton.classList.toggle("active", simState.measuring);
   });
 
-  stormForm?.addEventListener("input", (event) => {
+  addListener(stormForm, "input", (event) => {
     const { name, value } = event.target;
     const numericFields = ["headingDeg", "speedUnits", "power", "windKts", "x", "y"];
     if (!numericFields.includes(name)) return;
@@ -183,13 +284,13 @@ function hookControls() {
     updateStorm(selectedId, { [name]: Number(value) });
   });
 
-  scenarioListEl?.addEventListener("click", (event) => {
+  addListener(scenarioListEl, "click", (event) => {
     const button = event.target.closest("button[data-scenario-id]");
     if (!button) return;
     const scenario = loadScenario(button.dataset.scenarioId);
     if (scenario) {
       replaceStorms(scenario.storms);
-      simState.rings = [];
+      clearRings();
       simState.lastUpdateHours = scenario.initialTimeHours;
       setClockHours(scenario.initialTimeHours);
       // Spec requirement: loading a scenario must pause the simulation
@@ -197,7 +298,7 @@ function hookControls() {
     }
   });
 
-  document.addEventListener("keydown", (event) => {
+  addListener(document, "keydown", (event) => {
     if (event.key === " ") {
       event.preventDefault();
       togglePlay();
@@ -210,6 +311,121 @@ function hookControls() {
       measureButton?.click();
     }
   });
+
+  deleteStormBtn?.addEventListener("click", () => {
+    if (isPlaying) return;
+    const { selectedId } = getStormSnapshot();
+    if (selectedId) {
+      deleteStorm(selectedId);
+    }
+  });
+}
+
+function hookConfigControls() {
+  const config = getSimConfig();
+  if (baseTimeInput) {
+    baseTimeInput.value = config.baseTimeAcceleration;
+    baseTimeInput.addEventListener("change", () => {
+      const next = Number(baseTimeInput.value);
+      if (Number.isFinite(next) && next > 0) {
+        setBaseTimeAcceleration(next);
+      } else {
+        baseTimeInput.value = getSimConfig().baseTimeAcceleration;
+      }
+    });
+  }
+
+  if (sectorInput) {
+    sectorInput.value = config.ringSectorWidthDeg;
+    sectorInput.addEventListener("change", () => {
+      const next = Number(sectorInput.value);
+      if (Number.isFinite(next) && next >= 10 && next <= 360) {
+        setRingSectorWidthDeg(next);
+      } else {
+        sectorInput.value = getSimConfig().ringSectorWidthDeg;
+      }
+    });
+  }
+
+  if (sampleInput) {
+    sampleInput.value = config.ringSampleTolerancePx;
+    sampleInput.addEventListener("change", () => {
+      const next = Number(sampleInput.value);
+      if (Number.isFinite(next) && next >= 5 && next <= 200) {
+        setRingSampleTolerancePx(next);
+      } else {
+        sampleInput.value = getSimConfig().ringSampleTolerancePx;
+      }
+    });
+  }
+
+  if (propSpeedInput) {
+    propSpeedInput.value = config.ringPropagationSpeedKmH;
+    propSpeedInput.addEventListener("change", () => {
+      const next = Number(propSpeedInput.value);
+      if (Number.isFinite(next) && next >= 10 && next <= 500) {
+        setRingPropagationSpeedKmH(next);
+      } else {
+        propSpeedInput.value = getSimConfig().ringPropagationSpeedKmH;
+      }
+    });
+  }
+
+  if (decayInput) {
+    decayInput.value = config.ringDecayRatePerKm;
+    decayInput.addEventListener("change", () => {
+      const next = Number(decayInput.value);
+      if (Number.isFinite(next) && next >= 0.0001 && next <= 0.01) {
+        setRingDecayRatePerKm(next);
+      } else {
+        decayInput.value = getSimConfig().ringDecayRatePerKm;
+      }
+    });
+  }
+
+  if (minEnergyInput) {
+    minEnergyInput.value = config.ringMinActiveEnergy;
+    minEnergyInput.addEventListener("change", () => {
+      const next = Number(minEnergyInput.value);
+      if (Number.isFinite(next) && next >= 0.01 && next <= 5) {
+        setRingMinActiveEnergy(next);
+      } else {
+        minEnergyInput.value = getSimConfig().ringMinActiveEnergy;
+      }
+    });
+  }
+
+  if (spotCapInput) {
+    spotCapInput.value = config.spotEnergyCap;
+    spotCapInput.addEventListener("change", () => {
+      const next = Number(spotCapInput.value);
+      if (Number.isFinite(next) && next >= 1 && next <= 50) {
+        setSpotEnergyCap(next);
+      } else {
+        spotCapInput.value = getSimConfig().spotEnergyCap;
+      }
+    });
+  }
+
+  if (stormVectorToggle) {
+    stormVectorToggle.checked = config.showStormVectors;
+    stormVectorToggle.addEventListener("change", () => {
+      setShowStormVectors(stormVectorToggle.checked);
+    });
+  }
+
+  resetConfigBtn?.addEventListener("click", () => {
+    resetSimConfig();
+    const fresh = getSimConfig();
+    if (baseTimeInput) baseTimeInput.value = fresh.baseTimeAcceleration;
+    if (sectorInput) sectorInput.value = fresh.ringSectorWidthDeg;
+    if (sampleInput) sampleInput.value = fresh.ringSampleTolerancePx;
+    if (propSpeedInput) propSpeedInput.value = fresh.ringPropagationSpeedKmH;
+    if (decayInput) decayInput.value = fresh.ringDecayRatePerKm;
+    if (minEnergyInput) minEnergyInput.value = fresh.ringMinActiveEnergy;
+    if (spotCapInput) spotCapInput.value = fresh.spotEnergyCap;
+    if (stormVectorToggle) stormVectorToggle.checked = fresh.showStormVectors;
+  });
 }
 
 function renderStormList(snapshot) {
@@ -218,11 +434,16 @@ function renderStormList(snapshot) {
     stormListEl.innerHTML = "";
     emptyStateEl?.removeAttribute("hidden");
     stormForm?.setAttribute("hidden", "true");
+    updateDeleteButtonState(null);
     return;
   }
 
   emptyStateEl?.setAttribute("hidden", "true");
-  stormForm?.removeAttribute("hidden");
+  if (snapshot.selectedId) {
+    stormForm?.removeAttribute("hidden");
+  } else {
+    stormForm?.setAttribute("hidden", "true");
+  }
   stormListEl.innerHTML = snapshot.storms
     .map(
       (storm) => `
@@ -235,6 +456,8 @@ function renderStormList(snapshot) {
         </li>`
     )
     .join("");
+
+  updateDeleteButtonState(snapshot.selectedId);
 }
 
 function hookStormList() {
@@ -274,53 +497,38 @@ function syncStormForm(snapshot) {
 
 function hookCanvasInteractions() {
   let draggingId = null;
+  let activePointerId = null;
 
-  canvas.addEventListener("mousemove", (event) => {
+  const pointerToCanvas = (event) => {
     const rect = canvas.getBoundingClientRect();
-    const pointer = {
+    return {
       x: (event.clientX - rect.left) / rect.width,
       y: (event.clientY - rect.top) / rect.height
     };
-    if (draggingId) {
-      updateStorm(draggingId, pointer);
-      return;
-    }
-    if (simState.measuring && simState.measureStart) {
-      simState.measureEnd = pointer;
-    }
-  });
+  };
 
-  canvas.addEventListener("mousedown", (event) => {
+  const handlePointerDown = (event) => {
+    event.preventDefault();
+    activePointerId = event.pointerId;
+    canvas.setPointerCapture(event.pointerId);
+    const pointer = pointerToCanvas(event);
     const snapshot = getStormSnapshot();
+
     if (snapshot.placing) {
-      const rect = canvas.getBoundingClientRect();
-      const pointer = {
-        x: (event.clientX - rect.left) / rect.width,
-        y: (event.clientY - rect.top) / rect.height
-      };
       addStormAt(pointer);
       return;
     }
 
     if (simState.measuring) {
-      const rect = canvas.getBoundingClientRect();
-      const pointer = {
-        x: (event.clientX - rect.left) / rect.width,
-        y: (event.clientY - rect.top) / rect.height
-      };
       if (!simState.measureStart) {
         simState.measureStart = pointer;
+        simState.measureEnd = null;
       } else {
         simState.measureEnd = pointer;
       }
       return;
     }
 
-    const rect = canvas.getBoundingClientRect();
-    const pointer = {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height
-    };
     const storm = snapshot.storms.find((item) => {
       const dx = item.x - pointer.x;
       const dy = item.y - pointer.y;
@@ -330,20 +538,41 @@ function hookCanvasInteractions() {
     if (storm && !playing) {
       selectStorm(storm.id);
       draggingId = storm.id;
-    } else if (storm && playing) {
+    } else if (storm) {
       selectStorm(storm.id);
     } else {
       selectStorm(null);
     }
-  });
+  };
 
-  window.addEventListener("mouseup", () => {
-    draggingId = null;
-  });
+  const handlePointerMove = (event) => {
+    const pointer = pointerToCanvas(event);
+    if (draggingId && event.pointerId === activePointerId) {
+      event.preventDefault();
+      updateStorm(draggingId, pointer);
+      return;
+    }
+    if (simState.measuring && simState.measureStart) {
+      simState.measureEnd = pointer;
+    }
+  };
 
-  canvas.addEventListener("mouseleave", () => {
-    draggingId = null;
-  });
+  const handlePointerUp = (event) => {
+    if (event.pointerId === activePointerId) {
+      draggingId = null;
+      activePointerId = null;
+      try {
+        canvas.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore release errors
+      }
+    }
+  };
+
+  canvas.addEventListener("pointerdown", handlePointerDown);
+  canvas.addEventListener("pointermove", handlePointerMove);
+  canvas.addEventListener("pointerup", handlePointerUp);
+  canvas.addEventListener("pointercancel", handlePointerUp);
 }
 
 function updateRings(clockHours) {
@@ -367,6 +596,7 @@ function updateRings(clockHours) {
     const lastEmission = simState.stormEmissionTimes.get(storm.id) || 0;
     if (shouldEmitRing(storm, clockHours, lastEmission)) {
       simState.stormEmissionTimes.set(storm.id, clockHours);
+      storm.lastEmission = clockHours;
       simState.rings.push(createRing(storm, clockHours));
     }
   });
@@ -377,7 +607,7 @@ function updateRings(clockHours) {
 }
 
 function updateSpots() {
-  const canvasSize = { width: viewport.width, height: viewport.height };
+  const canvasSize = { width: viewport.cssWidth, height: viewport.cssHeight };
   spots.forEach((spot) => {
     const energy = sampleSpotEnergy(
       {
@@ -416,12 +646,10 @@ function renderFrame(timestamp) {
   }
   const deltaMs = timestamp - renderFrame.lastTimestamp;
   renderFrame.lastTimestamp = timestamp;
-  advance(deltaMs / 1000);
-
-  const frameTimeEl = document.querySelector("[data-frame-time]");
-  const ringCountEl = document.querySelector("[data-ring-count]");
-  frameTimeEl && (frameTimeEl.textContent = `${deltaMs.toFixed(1)}`);
-  ringCountEl && (ringCountEl.textContent = `${simState.rings.length}`);
+  resetRingEnergyCache(simState.rings);
+  resetRingEnergyCacheStats();
+  const deltaHours = (deltaMs / 3600000) * getSimConfig().baseTimeAcceleration;
+  advance(deltaHours);
 
   const clockSnapshot = getClockSnapshot();
   if (clockSnapshot.playing) {
@@ -431,13 +659,14 @@ function renderFrame(timestamp) {
   }
 
   const stormSnapshot = getStormSnapshot();
-  drawScene(ctx, { width: viewport.width, height: viewport.height }, {
+  drawScene(ctx, { width: viewport.cssWidth, height: viewport.cssHeight }, {
     spots,
     storms: stormSnapshot.storms,
     selectedId: stormSnapshot.selectedId,
     rings: simState.rings,
     measureOverlay: buildMeasureOverlay()
   });
+  updateDiagnostics(deltaMs);
   animationId = requestAnimationFrame(renderFrame);
 }
 
@@ -450,16 +679,46 @@ function stopAnimation() {
 
 function buildMeasureOverlay() {
   if (!simState.measureStart || !simState.measureEnd) return null;
-  const { width, height } = viewport;
+  const width = viewport.cssWidth;
+  const height = viewport.cssHeight;
   const startX = simState.measureStart.x * width;
   const startY = simState.measureStart.y * height;
   const endX = simState.measureEnd.x * width;
   const endY = simState.measureEnd.y * height;
   const dx = simState.measureEnd.x - simState.measureStart.x;
   const dy = simState.measureEnd.y - simState.measureStart.y;
-  const distance = Math.hypot(dx * width, dy * height) * (6000 / width);
-  const bearing = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+  const distance = Math.hypot(dx, dy) * MAX_RADIUS_KM;
+  const bearing = bearingFromNorth(dx, dy);
   return { startX, startY, endX, endY, distance, bearing };
+}
+
+function updateDiagnostics(deltaMs) {
+  if (frameTimeEl) {
+    frameTimeEl.textContent = `${deltaMs.toFixed(1)}`;
+  }
+  if (frameFpsEl) {
+    if (deltaMs > 0) {
+      const instantFps = 1000 / deltaMs;
+      const alpha = 1 - Math.exp(-Math.min(1, deltaMs / 1000));
+      diagnostics.fpsEma = diagnostics.fpsEma == null ? instantFps : diagnostics.fpsEma + alpha * (instantFps - diagnostics.fpsEma);
+      frameFpsEl.textContent = diagnostics.fpsEma.toFixed(1);
+    } else {
+      frameFpsEl.textContent = "--";
+    }
+  }
+  if (ringCountEl) {
+    ringCountEl.textContent = `${simState.rings.filter((ring) => ring.active).length}`;
+  }
+  if (cacheHitsEl || cacheMissesEl || cacheHitRateEl) {
+    const stats = getRingEnergyCacheStats();
+    cacheHitsEl && (cacheHitsEl.textContent = `${stats.hits}`);
+    cacheMissesEl && (cacheMissesEl.textContent = `${stats.misses}`);
+    if (cacheHitRateEl) {
+      const total = stats.hits + stats.misses;
+      const rate = total > 0 ? ((stats.hits / total) * 100).toFixed(1) : "--";
+      cacheHitRateEl.textContent = `${rate === "--" ? "--" : rate}%`;
+    }
+  }
 }
 
 function handleStormSnapshot(snapshot) {
@@ -474,7 +733,15 @@ function handleStormSnapshot(snapshot) {
   }
 }
 
+function updateDeleteButtonState(selectedId) {
+  if (!deleteStormBtn) return;
+  const shouldHide = !selectedId;
+  deleteStormBtn.hidden = shouldHide;
+  deleteStormBtn.toggleAttribute("disabled", shouldHide || isPlaying);
+}
+
 function handleClockSnapshot({ hours, playing }) {
+  isPlaying = playing;
   simTimeEl.textContent = hours.toFixed(1);
   if (playing) {
     playButton?.classList.add("active");
@@ -483,6 +750,7 @@ function handleClockSnapshot({ hours, playing }) {
     playButton?.classList.remove("active");
     pauseButton?.classList.add("active");
   }
+  updateDeleteButtonState(getStormSnapshot().selectedId);
 }
 
 function init() {
@@ -490,10 +758,12 @@ function init() {
   hookTabs();
   hookSpeedControl();
   hookControls();
+  hookConfigControls();
   hookStormList();
   hookCanvasInteractions();
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
   subscribeStorms(handleStormSnapshot);
   subscribeClock(handleClockSnapshot);
   subscribeScenarioStore(handleScenarioSnapshot);
@@ -501,6 +771,25 @@ function init() {
   handleClockSnapshot(getClockSnapshot());
   handleScenarioSnapshot(scenarioStoreSnapshot());
   animationId = requestAnimationFrame(renderFrame);
+}
+
+function clearRings() {
+  resetRingEnergyCache(simState.rings);
+  resetRingEnergyCacheStats();
+  simState.rings = [];
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    const clock = getClockSnapshot();
+    wasPlayingBeforeHide = clock.playing;
+    if (clock.playing) {
+      pause();
+    }
+  } else if (wasPlayingBeforeHide) {
+    wasPlayingBeforeHide = false;
+    // intentional: user must press play to resume
+  }
 }
 
 // Cleanup for Vite HMR

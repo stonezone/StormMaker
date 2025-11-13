@@ -26,6 +26,7 @@ dist/
 complete_file_manifest.json
 dependency_inventory.json
 database.sqlite
+.code/
 
 # Logs
 *.log

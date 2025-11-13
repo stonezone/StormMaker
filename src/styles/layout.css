@@ -98,6 +98,7 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none;
 }
 
 .side-panel {
@@ -153,6 +154,11 @@ body {
   box-shadow: 0 6px 12px rgba(33, 150, 243, 0.25);
 }
 
+.chip-button.danger {
+  background: linear-gradient(135deg, var(--color-danger), #ff8a80);
+  box-shadow: 0 6px 12px rgba(244, 67, 54, 0.35);
+}
+
 .storms-panel {
   gap: 12px;
   display: flex;
@@ -199,6 +205,13 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px 12px;
+}
+
+.tuning-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-top: 10px;
 }
 
 .form-field {
