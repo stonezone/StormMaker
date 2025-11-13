@@ -21,10 +21,10 @@ export function createRing(storm, currentHours) {
   };
 }
 
-export function shouldEmitRing(storm, currentTime) {
+export function shouldEmitRing(storm, currentTime, lastEmission = 0) {
   if (!storm.active) return false;
-  if (!storm.lastEmission) return true;
-  return currentTime - storm.lastEmission >= EMISSION_INTERVAL_HOURS;
+  if (lastEmission === 0) return true;
+  return currentTime - lastEmission >= EMISSION_INTERVAL_HOURS;
 }
 
 export function advanceRing(ring, dtHours) {
@@ -45,15 +45,32 @@ export function directionalWeight(directionDeg, minDeg, maxDeg) {
   const min = ((minDeg % 360) + 360) % 360;
   const max = ((maxDeg % 360) + 360) % 360;
 
+  // Calculate center of preferred window
+  let center;
+  let windowWidth;
+
   if (min <= max) {
-    if (norm >= min && norm <= max) return 1;
-    const distance = Math.min(Math.abs(norm - min), Math.abs(norm - max));
-    return Math.max(0, 1 - distance / 90);
+    // Non-wrapping case (e.g., 300° - 320°)
+    center = (min + max) / 2;
+    windowWidth = max - min;
+  } else {
+    // Wrapping case (e.g., 350° - 10°)
+    center = ((min + max + 360) / 2) % 360;
+    windowWidth = 360 - min + max;
   }
 
-  if (norm >= min || norm <= max) return 1;
-  const distance = Math.min(Math.abs(norm - min), Math.abs(norm - max));
-  return Math.max(0, 1 - distance / 120);
+  // Calculate angular distance to center
+  let distance = Math.abs(norm - center);
+  if (distance > 180) distance = 360 - distance;
+
+  const halfWidth = windowWidth / 2;
+
+  // Inside preferred window
+  if (distance <= halfWidth) return 1;
+
+  // Smooth falloff beyond window (45° falloff range)
+  const FALLOFF_DEGREES = 45;
+  return Math.max(0, 1 - (distance - halfWidth) / FALLOFF_DEGREES);
 }
 
 export function sampleSpotEnergy(spot, rings, canvasSize) {

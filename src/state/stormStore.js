@@ -69,18 +69,18 @@ export function selectStorm(id) {
 export function updateStorm(id, updates) {
   const storm = state.storms.find((item) => item.id === id);
   if (!storm) return;
-  if (isFiniteNumber(updates.x)) {
-    const nextX = clamp(updates.x);
-    if (!isOverLand(nextX, storm.y)) {
+
+  // Handle position updates atomically to prevent storms on land
+  if (isFiniteNumber(updates.x) || isFiniteNumber(updates.y)) {
+    const nextX = isFiniteNumber(updates.x) ? clamp(updates.x) : storm.x;
+    const nextY = isFiniteNumber(updates.y) ? clamp(updates.y) : storm.y;
+
+    if (!isOverLand(nextX, nextY)) {
       storm.x = nextX;
-    }
-  }
-  if (isFiniteNumber(updates.y)) {
-    const nextY = clamp(updates.y);
-    if (!isOverLand(storm.x, nextY)) {
       storm.y = nextY;
     }
   }
+
   if (isFiniteNumber(updates.headingDeg)) {
     storm.headingDeg = ((updates.headingDeg % 360) + 360) % 360;
   }
@@ -133,7 +133,6 @@ function normalizeStorm(storm = {}) {
   if (!storm.type) {
     normalized.type = "custom";
   }
-  normalized.lastEmission = null;
   return normalized;
 }
 

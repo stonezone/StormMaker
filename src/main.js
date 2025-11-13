@@ -78,8 +78,17 @@ const simState = {
   lastUpdateHours: 0,
   measuring: false,
   measureStart: null,
-  measureEnd: null
+  measureEnd: null,
+  stormEmissionTimes: new Map() // Track lastEmission per storm ID
 };
+
+let animationId = null;
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 function populateSpotList() {
   if (!spotListEl) return;
@@ -217,9 +226,9 @@ function renderStormList(snapshot) {
   stormListEl.innerHTML = snapshot.storms
     .map(
       (storm) => `
-        <li data-id="${storm.id}" class="${storm.id === snapshot.selectedId ? "selected" : ""}">
+        <li data-id="${escapeHtml(storm.id)}" class="${storm.id === snapshot.selectedId ? "selected" : ""}">
           <span>
-            <strong>${storm.name}</strong>
+            <strong>${escapeHtml(storm.name)}</strong>
             <small>${storm.headingDeg.toFixed(0)}° • ${storm.power.toFixed(1)} power</small>
           </span>
           <span>${(storm.speedUnits || 0).toFixed(1)} u/h</span>
@@ -243,10 +252,10 @@ function handleScenarioSnapshot(snapshot) {
       (scenario) => `
         <li class="${scenario.id === snapshot.activeScenarioId ? "selected" : ""}">
           <div>
-            <strong>${scenario.name}</strong>
-            <small>${scenario.description}</small>
+            <strong>${escapeHtml(scenario.name)}</strong>
+            <small>${escapeHtml(scenario.description)}</small>
           </div>
-          <button type="button" data-scenario-id="${scenario.id}" class="chip-button">
+          <button type="button" data-scenario-id="${escapeHtml(scenario.id)}" class="chip-button">
             ${scenario.id === snapshot.activeScenarioId ? "Loaded" : "Load"}
           </button>
         </li>`
@@ -339,14 +348,29 @@ function hookCanvasInteractions() {
 
 function updateRings(clockHours) {
   const stormSnapshot = getStormSnapshot();
+  const dtHours = Math.max(0, clockHours - simState.lastUpdateHours);
+
+  // Update storm positions based on heading and speed
   stormSnapshot.storms.forEach((storm) => {
-    if (shouldEmitRing(storm, clockHours)) {
-      storm.lastEmission = clockHours;
+    if (storm.active && storm.speedUnits > 0) {
+      const headingRad = (storm.headingDeg * Math.PI) / 180;
+      // Scale factor: speedUnits are relative map units per hour
+      const scale = 0.01; // Adjust to make storms move at reasonable pace
+      const newX = storm.x + Math.cos(headingRad) * storm.speedUnits * dtHours * scale;
+      const newY = storm.y + Math.sin(headingRad) * storm.speedUnits * dtHours * scale;
+      updateStorm(storm.id, { x: newX, y: newY });
+    }
+  });
+
+  // Emit rings from storms
+  stormSnapshot.storms.forEach((storm) => {
+    const lastEmission = simState.stormEmissionTimes.get(storm.id) || 0;
+    if (shouldEmitRing(storm, clockHours, lastEmission)) {
+      simState.stormEmissionTimes.set(storm.id, clockHours);
       simState.rings.push(createRing(storm, clockHours));
     }
   });
 
-  const dtHours = Math.max(0, clockHours - simState.lastUpdateHours);
   simState.lastUpdateHours = clockHours;
   simState.rings.forEach((ring) => advanceRing(ring, dtHours));
   simState.rings = simState.rings.filter((ring) => ring.active);
@@ -414,7 +438,14 @@ function renderFrame(timestamp) {
     rings: simState.rings,
     measureOverlay: buildMeasureOverlay()
   });
-  requestAnimationFrame(renderFrame);
+  animationId = requestAnimationFrame(renderFrame);
+}
+
+function stopAnimation() {
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
 }
 
 function buildMeasureOverlay() {
@@ -469,7 +500,14 @@ function init() {
   handleStormSnapshot(getStormSnapshot());
   handleClockSnapshot(getClockSnapshot());
   handleScenarioSnapshot(scenarioStoreSnapshot());
-  requestAnimationFrame(renderFrame);
+  animationId = requestAnimationFrame(renderFrame);
+}
+
+// Cleanup for Vite HMR
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopAnimation();
+  });
 }
 
 init();
