@@ -15,7 +15,7 @@ StormMaker is a browser-based educational simulation that teaches how North Paci
 ```bash
 npm install
 npm run dev      # Start development server (localhost:5173)
-npm test         # Run test suite (9 tests)
+npm test         # Run test suite (17 tests)
 npm run build    # Production bundle
 ```
 
@@ -328,7 +328,7 @@ npm test -- --coverage      # Coverage report
 **Specification:** `docs/north_pacific_combined_project_spec.md`
 **Code Review:** `CODE_REVIEW.md`
 **Acceptance Criteria:** `ACCEPTANCE.md`
-**Dependencies:** Vite ~7.2.2, Vitest ~3.2.4
+**Dependencies:** Vite ~7.2.2, Vitest ^4.0.8
 
 ---
 
