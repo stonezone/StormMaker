@@ -28,6 +28,13 @@ dependency_inventory.json
 database.sqlite
 .code/
 
+# AI Assistant directories (keep .claude for essential docs)
+.serena/
+
+# Temporary/scratch files
+CURRENT_TODO.md
+VERIFICATION_REPORT.md
+
 # Logs
 *.log
 npm-debug.log*

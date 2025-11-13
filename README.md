@@ -1,8 +1,20 @@
 # StormMaker / North Pacific Swell Lab
 
+[![CI](https://github.com/stonezone/StormMaker/actions/workflows/ci.yml/badge.svg)](https://github.com/stonezone/StormMaker/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Browser-based simulation that teaches how North Pacific storms light up Oʻahu's North Shore. The MVP follows `docs/north_pacific_combined_project_spec.md` and focuses on a single-page canvas experience with editable storms, animated swell rings, and North Shore spot indicators.
+
+## Tech Stack
+
+- **Language**: Vanilla JavaScript (ES6+)
+- **Build Tool**: Vite 7.2.2
+- **Testing**: Vitest 4.0.8 (17 tests)
+- **Rendering**: HTML5 Canvas API
+- **State Management**: Custom pub/sub pattern with immutable snapshots
+- **Styling**: CSS3 with CSS custom properties (themes)
+- **Node.js**: >=20.19.0 required
+- **CI/CD**: GitHub Actions
 
 ## Project Setup
 
@@ -69,3 +81,45 @@ Implementation phases mirror the spec (skeleton, storms, swell rings, scenarios,
 | `MAX_RADIUS_KM` | 6000 km | Map-wide normalization for swell radius + measure tool distances. |
 
 Adjust these constants in `src/main.js` / `src/physics/swell.js` for different pacing or visualization needs.
+
+
+## Contributing
+
+Contributions are welcome! This project follows standard development practices:
+
+### Getting Started
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/StormMaker.git`
+3. Install dependencies: `npm install`
+4. Create a feature branch: `git checkout -b feature/your-feature-name`
+5. Make your changes and test: `npm test && npm run build`
+6. Commit with clear messages (we use conventional commits)
+7. Push and create a Pull Request
+
+### Code Guidelines
+- Follow existing code style (camelCase for functions/variables)
+- Keep functions under 50 lines where possible
+- Never mutate store snapshots directly
+- Add tests for new physics/logic functions
+- Run `npm test` before committing
+- Ensure `npm run build` succeeds
+
+### Documentation
+- Update `.claude/CLAUDE.md` for significant changes
+- Update `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
+- Add JSDoc comments for complex functions
+- Update README if adding new features or changing setup
+
+### Areas for Contribution
+- **Testing**: Increase coverage from 20% to 60%+ (state stores, UI, edge cases)
+- **E2E Tests**: Add Playwright tests for browser interactions
+- **Accessibility**: WCAG compliance improvements
+- **Performance**: Spatial indexing for >100 rings
+- **Features**: Implement missing spec items (Step button, Help overlay, Tooltips)
+- **Documentation**: Add JSDoc annotations, improve inline comments
+
+See [`ACCEPTANCE.md`](ACCEPTANCE.md) for MVP acceptance criteria and [`CODE_REVIEW.md`](CODE_REVIEW.md) for architectural notes.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
