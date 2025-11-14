@@ -15,6 +15,9 @@ const state = {
 };
 
 const listeners = new Set();
+const placementWarningListeners = new Set();
+
+const PLACEMENT_WARNING = "Storms can't sit directly over Oʻahu or past the northern boundary in this version.";
 
 const clamp = (value, min = 0, max = 1) => Math.min(Math.max(value, min), max);
 
@@ -42,6 +45,11 @@ export function subscribe(listener) {
   };
 }
 
+export function subscribePlacementWarnings(listener) {
+  placementWarningListeners.add(listener);
+  return () => placementWarningListeners.delete(listener);
+}
+
 export function beginPlacement() {
   state.placing = true;
   emit();
@@ -54,15 +62,24 @@ export function cancelPlacement() {
 }
 
 export function addStormAt({ x, y }) {
-  const storm = normalizeStorm({
-    type: "custom",
+  const clamped = {
     x: clamp(x),
     y: clamp(y)
+  };
+  if (isOverLand(clamped.x, clamped.y)) {
+    emitPlacementWarning(PLACEMENT_WARNING);
+    return null;
+  }
+  const storm = normalizeStorm({
+    type: "custom",
+    x: clamped.x,
+    y: clamped.y
   });
   state.storms.push(storm);
   state.selectedId = storm.id;
   state.placing = false;
   emit();
+  emitPlacementWarning(null);
   return storm;
 }
 
@@ -83,6 +100,9 @@ export function updateStorm(id, updates) {
     if (!isOverLand(nextX, nextY)) {
       storm.x = nextX;
       storm.y = nextY;
+      emitPlacementWarning(null);
+    } else {
+      emitPlacementWarning(PLACEMENT_WARNING);
     }
   }
 
@@ -168,4 +188,8 @@ function isOverLand(x, y) {
   const nearHawaii = x > 0.65 && x < 0.85 && y > 0.65 && y < 0.9;
   const farNorth = y < 0.05;
   return nearHawaii || farNorth;
+}
+
+function emitPlacementWarning(message) {
+  placementWarningListeners.forEach((listener) => listener(message));
 }

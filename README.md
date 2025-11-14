@@ -82,6 +82,11 @@ Implementation phases mirror the spec (skeleton, storms, swell rings, scenarios,
 
 Adjust these constants in `src/main.js` / `src/physics/swell.js` for different pacing or visualization needs.
 
+### Physics Notes & Manual Regression Checklist
+
+- See [`docs/physics_notes.md`](docs/physics_notes.md) for the canonical description of energy units, map scaling, and how storm fields influence ring energy.
+- The same document lists “sanity scenes” that should be manually checked whenever physics rules change (Historic Major NPAC Low, Central Pacific West, and a single-storm benchmark). Keep those snapshots handy for QA reviews.
+
 
 ## Contributing
 

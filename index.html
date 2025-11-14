@@ -44,6 +44,7 @@
                 <span class="placing-indicator" data-placing-indicator hidden>Click map…</span>
               </div>
             </div>
+            <p class="inline-warning" data-placement-warning hidden aria-live="polite"></p>
             <ul class="panel-list" data-storm-list></ul>
             <div class="storm-form" data-storm-form hidden>
               <div class="form-grid">
@@ -105,45 +106,52 @@
               · Misses: <span data-cache-misses>0</span>
               · Hit rate: <span data-cache-hit-rate>--%</span>
             </p>
+            <p class="diag-note">
+              Tip: Ring count > 800 with low hit rate usually means sampling tolerance is too wide—trim it or slow time acceleration.
+            </p>
             <div class="tuning-grid">
-              <label class="form-field">
+              <label class="form-field" title="Higher values accelerate simulated time relative to real seconds.">
                 <span>Time Accel (hr/hr)</span>
                 <input type="number" step="100" min="100" max="14400" data-config-base-time />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="Controls how wide each swell lobe spreads. Narrow sectors sharpen directionality.">
                 <span>Swell Sector (°)</span>
                 <input type="number" step="5" min="10" max="360" data-config-sector />
               </label>
-              <label class="form-field">
-                <span>Sampling Tol (px)</span>
+              <label class="form-field" title="Tolerance is scaled per canvas size. Higher values make spots pick up more distant rings.">
+                <span>Sampling Tol (per 1000px)</span>
                 <input type="number" step="5" min="5" max="200" data-config-sample />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="EMA smoothing for spot readouts. Lower = twitchy, higher = calm.">
                 <span>Spot Smoothing (0–1)</span>
                 <input type="number" step="0.05" min="0" max="1" data-config-spot-smoothing />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="Base propagation speed for rings before storm modifiers.">
                 <span>Ring Speed (km/h)</span>
                 <input type="number" step="5" min="10" max="500" data-config-prop-speed />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="Larger values make energy fade sooner with distance.">
                 <span>Decay Rate (/km)</span>
                 <input type="number" step="0.0001" min="0.0001" max="0.01" data-config-decay />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="Rings below this energy are culled to keep perf sane.">
                 <span>Min Energy</span>
                 <input type="number" step="0.01" min="0.01" max="5" data-config-min-energy />
               </label>
-              <label class="form-field">
+              <label class="form-field" title="Caps total energy so the UI doesn't explode during stacked storms.">
                 <span>Spot Cap</span>
                 <input type="number" step="0.5" min="1" max="50" data-config-spot-cap />
               </label>
-              <label class="form-field toggle-field">
+              <label class="form-field toggle-field" title="Show heading vectors for each storm">
                 <span>Show Storm Vectors</span>
                 <input type="checkbox" data-config-storm-vectors />
               </label>
+              <label class="form-field toggle-field" title="Visualize each ring's sector footprint to help tune directionality">
+                <span>Show Ring Sectors</span>
+                <input type="checkbox" data-config-show-sectors />
+              </label>
             </div>
-            <button type="button" class="chip-button" data-config-reset>Reset Defaults</button>
+            <button type="button" class="chip-button" data-config-reset title="Restore all diagnostics sliders to the teaching defaults">Reset Defaults</button>
           </article>
         </aside>
       </main>

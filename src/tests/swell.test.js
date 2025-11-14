@@ -7,7 +7,13 @@ import {
   classifyHeight,
   sampleSpotEnergy,
   bearingFromNorth,
-  directionalFalloff
+  directionalFalloff,
+  shouldEmitRing,
+  EMISSION_INTERVAL_HOURS,
+  computeBaseEnergy,
+  getRingEnergyCached,
+  getRingEnergyCacheStats,
+  resetRingEnergyCacheStats
 } from "../physics/swell.js";
 import { MAX_RADIUS_KM, getSimConfig } from "../config/simConfig.js";
 
@@ -34,6 +40,32 @@ describe("directionalWeight", () => {
   it("handles wrap-around windows", () => {
     expect(directionalWeight(0, 350, 10)).toBe(1);
     expect(directionalWeight(180, 350, 10)).toBe(0);
+  });
+});
+
+describe("combined directional weighting", () => {
+  const spotMin = 270;
+  const spotMax = 330;
+  const ringCenter = 120;
+  const halfWidth = 60;
+
+  const combined = (offsetDeg) => {
+    const direction = ringCenter + offsetDeg;
+    const sector = directionalFalloff(direction, ringCenter, halfWidth);
+    const incoming = (direction + 180) % 360;
+    const preferred = directionalWeight(incoming, spotMin, spotMax);
+    return sector * preferred;
+  };
+
+  it("monotonically decreases as angle offset grows", () => {
+    const aligned = combined(0);
+    const off45 = combined(45);
+    const off90 = combined(90);
+    const off135 = combined(135);
+    expect(aligned).toBeGreaterThan(off45);
+    expect(off45).toBeGreaterThan(off90);
+    expect(off90).toBeGreaterThanOrEqual(off135);
+    expect(off135).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -86,6 +118,19 @@ describe("ring dynamics", () => {
     expect(later).toBeLessThan(initial);
   });
 
+  it("decay hits documented checkpoints", () => {
+    const config = getSimConfig();
+    config.ringDecayRatePerKm = 0.001;
+    const ring = createRing({ id: "decay", power: 5, active: true }, 0);
+    const base = computeRingEnergy(ring);
+    ring.radiusKm = 1000;
+    const near = computeRingEnergy(ring);
+    ring.radiusKm = 3000;
+    const far = computeRingEnergy(ring);
+    expect(near / base).toBeCloseTo(Math.exp(-1), 2);
+    expect(far / base).toBeLessThan(0.08);
+  });
+
   it("advanceRing deactivates once energy < min threshold", () => {
     const config = getSimConfig();
     config.ringMinActiveEnergy = 2;
@@ -93,14 +138,42 @@ describe("ring dynamics", () => {
     advanceRing(ring, 1);
     expect(ring.active).toBe(false);
   });
+
+  it("emission cadence depends on sim hours only", () => {
+    const storm = { id: "emit", active: true, lastEmission: 0 };
+    expect(shouldEmitRing(storm, EMISSION_INTERVAL_HOURS - 0.1, 0)).toBe(false);
+    expect(shouldEmitRing(storm, EMISSION_INTERVAL_HOURS + 0.1, 0)).toBe(true);
+  });
+
+  it("base energy scales with wind and radius", () => {
+    const low = computeBaseEnergy({ power: 5, windKts: 20, radiusKm: 200 });
+    const highWind = computeBaseEnergy({ power: 5, windKts: 60, radiusKm: 200 });
+    const bigRadius = computeBaseEnergy({ power: 5, windKts: 20, radiusKm: 600 });
+    expect(highWind).toBeGreaterThan(low);
+    expect(bigRadius).toBeGreaterThan(low);
+  });
+});
+
+describe("ring energy cache", () => {
+  it("reuses cached values after first computation", () => {
+    resetRingEnergyCacheStats();
+    const ring = createRing({ id: "cache", power: 4, active: true }, 0);
+    const first = getRingEnergyCached(ring);
+    const afterMiss = { ...getRingEnergyCacheStats() };
+    const second = getRingEnergyCached(ring);
+    const afterHit = getRingEnergyCacheStats();
+    expect(second).toBe(first);
+    expect(afterHit.hits).toBeGreaterThan(afterMiss.hits ?? 0);
+    expect(afterHit.misses).toBeGreaterThanOrEqual(afterMiss.misses);
+  });
 });
 
 describe("classifyHeight", () => {
   it("assigns qualitative buckets", () => {
-    expect(classifyHeight(0.1)).toBe("Flat");
-    expect(classifyHeight(1)).toBe("Fun");
-    expect(classifyHeight(2.5)).toBe("Solid");
-    expect(classifyHeight(6)).toBe("XL");
+    expect(classifyHeight(0.5)).toBe("Flat");
+    expect(classifyHeight(2)).toBe("Fun");
+    expect(classifyHeight(5)).toBe("Solid");
+    expect(classifyHeight(9)).toBe("XL");
   });
 });
 
@@ -109,7 +182,7 @@ describe("sampleSpotEnergy", () => {
     const spot = { x: 0.75, y: 0.8, preferredMin: 300, preferredMax: 330 };
     const rings = Array.from({ length: 20 }, (_, idx) => {
       const ring = createRing({ id: `r${idx}`, power: 10, active: true }, 0);
-      ring.radiusKm = 0;
+      ring.radiusKm = 80;
       ring.x = spot.x;
       ring.y = spot.y;
       return ring;

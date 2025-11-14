@@ -5,6 +5,12 @@ const energyCacheStats = {
   misses: 0
 };
 
+const MIN_DIRECTIONAL_WEIGHT = 0.15;
+const MIN_SAMPLE_RADIUS_KM = 50;
+const WIND_REF_KTS = 40;
+const RADIUS_REF_KM = 400;
+const BASE_POWER_MULTIPLIER = 2;
+
 export const EMISSION_INTERVAL_HOURS = 3;
 
 export function createRing(storm, currentHours) {
@@ -18,10 +24,17 @@ export function createRing(storm, currentHours) {
     headingDeg: storm.headingDeg ?? 0,
     radiusKm: 0,
     propagationSpeed: ringPropagationSpeedKmH * (0.4 + storm.power / 10),
-    baseEnergy: storm.power * 2,
+    baseEnergy: computeBaseEnergy(storm),
     decayRate: ringDecayRatePerKm,
     active: true
   };
+}
+
+export function computeBaseEnergy(storm) {
+  const power = Math.max(0, storm.power ?? 0);
+  const windFactor = clamp((storm.windKts ?? 0) / WIND_REF_KTS, 0.5, 3);
+  const sizeFactor = clamp((storm.radiusKm ?? RADIUS_REF_KM) / RADIUS_REF_KM, 0.5, 2);
+  return power * BASE_POWER_MULTIPLIER * windFactor * sizeFactor;
 }
 
 export function shouldEmitRing(storm, currentTime, lastEmission = undefined) {
@@ -79,25 +92,34 @@ export function directionalWeight(directionDeg, minDeg, maxDeg) {
   return Math.max(0, 1 - (distance - halfWidth) / FALLOFF_DEGREES);
 }
 
-export function sampleSpotEnergy(spot, rings, canvasSize) {
+export function sampleSpotEnergy(spot, rings, canvasSize, debugInfo = null) {
   let total = 0;
   const { ringSampleTolerancePx, ringSectorWidthDeg, spotEnergyCap } = getSimConfig();
   const halfSector = Math.max(10, ringSectorWidthDeg / 2);
+  const minCanvasDim = Math.min(canvasSize.width, canvasSize.height);
+  const tolerancePx = (ringSampleTolerancePx / 1000) * minCanvasDim;
   rings.forEach((ring) => {
     if (!ring.active) return;
+    if (ring.radiusKm < MIN_SAMPLE_RADIUS_KM) return;
     const dxCss = (spot.x - ring.x) * canvasSize.width;
     const dyCss = (spot.y - ring.y) * canvasSize.height;
     const distanceCss = Math.hypot(dxCss, dyCss);
     const radiusCss = (ring.radiusKm / MAX_RADIUS_KM) * Math.min(canvasSize.width, canvasSize.height);
-    if (Math.abs(distanceCss - radiusCss) <= ringSampleTolerancePx) {
+    if (Math.abs(distanceCss - radiusCss) <= tolerancePx) {
       const direction = bearingFromNorth(dxCss, dyCss);
       const sectorWeight = directionalFalloff(direction, ring.headingDeg ?? 0, halfSector);
       if (sectorWeight <= 0) return;
       // Spots define the compass direction waves arrive *from*, while the
       // propagation direction we just computed points *toward* the spot.
       const incomingDirection = (direction + 180) % 360;
-      const preferredWeight = directionalWeight(incomingDirection, spot.preferredMin, spot.preferredMax);
-      total += getRingEnergyCached(ring) * sectorWeight * preferredWeight;
+      const basePreferredWeight = directionalWeight(incomingDirection, spot.preferredMin, spot.preferredMax);
+      const preferredWeight = Math.max(basePreferredWeight, MIN_DIRECTIONAL_WEIGHT);
+      const contribution = getRingEnergyCached(ring) * sectorWeight * preferredWeight;
+      total += contribution;
+      if (debugInfo && contribution > (debugInfo.maxContribution ?? 0)) {
+        debugInfo.maxContribution = contribution;
+        debugInfo.topRingId = ring.stormId ?? ring.id;
+      }
     }
   });
 
@@ -122,10 +144,14 @@ function angularDifference(a, b) {
 }
 
 export function classifyHeight(height) {
-  if (height < 0.3) return "Flat";
-  if (height < 1.5) return "Fun";
-  if (height < 3.5) return "Solid";
+  if (height < 1) return "Flat";
+  if (height < 4) return "Fun";
+  if (height < 8) return "Solid";
   return "XL";
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 export function getRingEnergyCached(ring) {

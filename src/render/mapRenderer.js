@@ -60,7 +60,7 @@ if (typeof Image !== "undefined") {
 export function drawScene(
   ctx,
   { width, height },
-  { spots, storms, selectedId, rings = [], measureOverlay = null }
+  { spots, storms, selectedId, rings = [], measureOverlay = null, showRingSectors = false }
 ) {
   const palette = resolvePalette();
   ctx.clearRect(0, 0, width, height);
@@ -68,7 +68,7 @@ export function drawScene(
   drawDarkOverlay(ctx, width, height);
   drawGrid(ctx, width, height);
   drawHawaiiInset(ctx, width, height, palette);
-  drawRings(ctx, width, height, rings);
+  drawRings(ctx, width, height, rings, showRingSectors);
   drawStorms(ctx, width, height, storms, selectedId, palette);
   drawSpots(ctx, width, height, spots, palette);
   if (measureOverlay) {
@@ -172,7 +172,7 @@ function drawHawaiiInset(ctx, width, height, palette) {
   ctx.fillText("Oʻahu – North Shore", centerX - radius * 0.8, centerY - radius * 0.9);
 }
 
-function drawRings(ctx, width, height, rings) {
+function drawRings(ctx, width, height, rings, showSectors = false) {
   rings.forEach((ring) => {
     if (!ring.active) return;
     const energy = getRingEnergyCached(ring);
@@ -186,6 +186,17 @@ function drawRings(ctx, width, height, rings) {
     const headingRad = ((ring.headingDeg ?? 0) * Math.PI) / 180;
     const startAngle = headingRad - halfSector;
     const endAngle = headingRad + halfSector;
+
+    if (showSectors) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, radiusPx, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(255, 255, 255, ${(opacity * 0.25).toFixed(2)})`;
+      ctx.fill();
+      ctx.restore();
+    }
 
     ctx.beginPath();
     ctx.strokeStyle = `rgba(255, 255, 255, ${opacity.toFixed(2)})`;

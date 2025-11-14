@@ -12,7 +12,8 @@ import {
   bearingFromNorth,
   resetRingEnergyCache,
   getRingEnergyCacheStats,
-  resetRingEnergyCacheStats
+  resetRingEnergyCacheStats,
+  getRingEnergyCached
 } from "./physics/swell.js";
 import {
   getSimConfig,
@@ -47,13 +48,17 @@ import {
   updateStorm,
   deleteStorm,
   getSnapshot as getStormSnapshot,
-  replaceStorms
+  replaceStorms,
+  subscribePlacementWarnings
 } from "./state/stormStore.js";
 import {
   subscribe as subscribeScenarioStore,
   loadScenario,
   getSnapshot as scenarioStoreSnapshot
 } from "./state/scenarioStore.js";
+import { computeClampedDeltaHours } from "./utils/timeStep.js";
+import { computeStormDeltaUnits } from "./utils/stormMotion.js";
+import { applyEma } from "./utils/ema.js";
 
 const canvas = document.getElementById("storm-canvas");
 const ctx = canvas?.getContext("2d");
@@ -82,6 +87,7 @@ const playButton = document.querySelector(".control-button.play");
 const pauseButton = document.querySelector(".control-button.pause");
 const resetButton = document.querySelector(".control-button.reset");
 const measureButton = document.querySelector(".control-button.measure");
+const placementWarningEl = document.querySelector("[data-placement-warning]");
 
 const scenarioListEl = document.querySelector("[data-scenario-list]");
 const tabPanels = document.querySelectorAll("[data-panel]");
@@ -102,6 +108,7 @@ const ringCountEl = document.querySelector("[data-ring-count]");
 const cacheHitsEl = document.querySelector("[data-cache-hits]");
 const cacheMissesEl = document.querySelector("[data-cache-misses]");
 const cacheHitRateEl = document.querySelector("[data-cache-hit-rate]");
+const showSectorsToggle = document.querySelector("[data-config-show-sectors]");
 
 const viewport = {
   cssWidth: 0,
@@ -141,17 +148,25 @@ const simState = {
   measuring: false,
   measureStart: null,
   measureEnd: null,
-  stormEmissionTimes: new Map() // Track lastEmission per storm ID
+  stormEmissionTimes: new Map(), // Track lastEmission per storm ID
+  lastMaxSpotHeight: 0
 };
 
 const diagnostics = {
   fpsEma: null
 };
 
+const MAX_ACTIVE_RINGS = 1000;
+const TOP_SPOT_EPSILON = 0.05;
+
 let isPlaying = false;
 let wasPlayingBeforeHide = false;
 
 let animationId = null;
+let showRingSectorOverlay = false;
+let warningHideTimeout = null;
+let fpsAlerted = false;
+let ringCapWarned = false;
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -160,19 +175,7 @@ function escapeHtml(str) {
 }
 
 function populateSpotList() {
-  if (!spotListEl) return;
-  spotListEl.innerHTML = spots
-    .map(
-      (spot) => `
-        <li>
-          <span>
-            <strong>${spot.name}</strong>
-            <small>${spot.preferredDirection}</small>
-          </span>
-          <span>${spot.quality}</span>
-        </li>`
-    )
-    .join("");
+  renderSpotPanel();
 }
 
 function resizeCanvas() {
@@ -251,6 +254,7 @@ function hookSpeedControl() {
 
 function hookControls() {
   addListener(addStormBtn, "click", () => {
+    handlePlacementWarning(null);
     beginPlacement();
   });
 
@@ -295,6 +299,7 @@ function hookControls() {
       resetSimulationState();
       // Spec requirement: loading a scenario must pause the simulation
       pause();
+      handlePlacementWarning(null);
     }
   });
 
@@ -407,10 +412,29 @@ function hookConfigControls() {
     });
   }
 
+  if (spotSmoothInput) {
+    spotSmoothInput.value = config.spotEnergySmoothingAlpha;
+    spotSmoothInput.addEventListener("change", () => {
+      const next = Number(spotSmoothInput.value);
+      if (Number.isFinite(next) && next >= 0 && next <= 1) {
+        setSpotEnergySmoothingAlpha(next);
+      } else {
+        spotSmoothInput.value = getSimConfig().spotEnergySmoothingAlpha;
+      }
+    });
+  }
+
   if (stormVectorToggle) {
     stormVectorToggle.checked = config.showStormVectors;
     stormVectorToggle.addEventListener("change", () => {
       setShowStormVectors(stormVectorToggle.checked);
+    });
+  }
+
+  if (showSectorsToggle) {
+    showSectorsToggle.checked = showRingSectorOverlay;
+    showSectorsToggle.addEventListener("change", () => {
+      showRingSectorOverlay = showSectorsToggle.checked;
     });
   }
 
@@ -425,6 +449,9 @@ function hookConfigControls() {
     if (minEnergyInput) minEnergyInput.value = fresh.ringMinActiveEnergy;
     if (spotCapInput) spotCapInput.value = fresh.spotEnergyCap;
     if (stormVectorToggle) stormVectorToggle.checked = fresh.showStormVectors;
+    if (spotSmoothInput) spotSmoothInput.value = fresh.spotEnergySmoothingAlpha;
+    showRingSectorOverlay = false;
+    showSectorsToggle && (showSectorsToggle.checked = false);
   });
 }
 
@@ -484,6 +511,24 @@ function handleScenarioSnapshot(snapshot) {
         </li>`
     )
     .join("");
+}
+
+function handlePlacementWarning(message) {
+  if (!placementWarningEl) return;
+  if (warningHideTimeout) {
+    window.clearTimeout(warningHideTimeout);
+    warningHideTimeout = null;
+  }
+  if (!message) {
+    placementWarningEl.setAttribute("hidden", "true");
+    placementWarningEl.textContent = "";
+    return;
+  }
+  placementWarningEl.textContent = message;
+  placementWarningEl.removeAttribute("hidden");
+  warningHideTimeout = window.setTimeout(() => {
+    placementWarningEl?.setAttribute("hidden", "true");
+  }, 4000);
 }
 
 function syncStormForm(snapshot) {
@@ -575,18 +620,15 @@ function hookCanvasInteractions() {
   canvas.addEventListener("pointercancel", handlePointerUp);
 }
 
-function updateRings(clockHours) {
-  const stormSnapshot = getStormSnapshot();
+function updateRings(clockHours, stormSnapshot = getStormSnapshot()) {
   const dtHours = Math.max(0, clockHours - simState.lastUpdateHours);
 
   // Update storm positions based on heading and speed
   stormSnapshot.storms.forEach((storm) => {
     if (storm.active && storm.speedUnits > 0) {
-      const headingRad = (storm.headingDeg * Math.PI) / 180;
-      // Scale factor: speedUnits are relative map units per hour
-      const scale = 0.01; // Adjust to make storms move at reasonable pace
-      const newX = storm.x + Math.cos(headingRad) * storm.speedUnits * dtHours * scale;
-      const newY = storm.y + Math.sin(headingRad) * storm.speedUnits * dtHours * scale;
+      const { dx, dy } = computeStormDeltaUnits(storm.speedUnits, storm.headingDeg, dtHours);
+      const newX = storm.x + dx;
+      const newY = storm.y + dy;
       updateStorm(storm.id, { x: newX, y: newY });
     }
   });
@@ -607,14 +649,23 @@ function updateRings(clockHours) {
   simState.lastUpdateHours = clockHours;
   simState.rings.forEach((ring) => advanceRing(ring, dtHours));
   simState.rings = simState.rings.filter((ring) => ring.active);
+  if (simState.rings.length > MAX_ACTIVE_RINGS) {
+    simState.rings.sort((a, b) => getRingEnergyCached(b) - getRingEnergyCached(a));
+    simState.rings.length = MAX_ACTIVE_RINGS;
+    if (!ringCapWarned) {
+      console.warn(`Ring cap of ${MAX_ACTIVE_RINGS} reached; trimming lowest energy rings.`);
+      ringCapWarned = true;
+    }
+  }
 }
 
-function updateSpots() {
+function updateSpots(stormSnapshot) {
   const canvasSize = { width: viewport.cssWidth, height: viewport.cssHeight };
-  const { spotEnergySmoothingAlpha } = getSimConfig();
-  const alpha = spotEnergySmoothingAlpha;
-
+  const smoothing = getSimConfig().spotEnergySmoothingAlpha;
+  const stormNameLookup = new Map((stormSnapshot?.storms ?? []).map((storm) => [storm.id, storm.name]));
+  let peak = 0;
   spots.forEach((spot) => {
+    const debugInfo = {};
     const raw = sampleSpotEnergy(
       {
         x: spot.x,
@@ -623,31 +674,41 @@ function updateSpots() {
         preferredMax: spot.preferredMax
       },
       simState.rings,
-      canvasSize
+      canvasSize,
+      debugInfo
     );
-
-    // Exponential smoothing: smoothed = alpha * raw + (1 - alpha) * prev
-    const prev = spot.smoothedHeight ?? 0;
-    const smoothed = alpha * raw + (1 - alpha) * prev;
+    const smoothed = applyEma(spot.smoothedHeight, raw, smoothing);
     spot.smoothedHeight = smoothed;
     spot.currentHeight = smoothed;
     spot.currentQuality = classifyHeight(smoothed);
+    spot.lastContributorName = debugInfo.topRingId ? stormNameLookup.get(debugInfo.topRingId) || debugInfo.topRingId : null;
+    if (smoothed > peak) {
+      peak = smoothed;
+    }
   });
+  simState.lastMaxSpotHeight = peak;
 }
 
 function renderSpotPanel() {
   if (!spotListEl) return;
+  const highest = simState.lastMaxSpotHeight ?? 0;
   spotListEl.innerHTML = spots
-    .map(
-      (spot) => `
-        <li>
+    .map((spot) => {
+      const currentHeight = spot.currentHeight ?? 0;
+      const isTop = highest > 0 && Math.abs(currentHeight - highest) <= TOP_SPOT_EPSILON;
+      const classes = ["spot-item"];
+      if (isTop) classes.push("top-spot");
+      const contributor = spot.lastContributorName;
+      const contributorMarkup = contributor ? `<small class="spot-contributor">Driver: ${escapeHtml(contributor)}</small>` : "";
+      return `
+        <li class="${classes.join(" ")}">
           <span>
-            <strong>${spot.name}</strong>
-            <small>${spot.preferredDirection}</small>
+            <strong>${escapeHtml(spot.name)}</strong>
+            <small>${escapeHtml(spot.preferredDirection)}</small>
           </span>
-          <span>${(spot.currentHeight ?? 0).toFixed(1)} • ${spot.currentQuality ?? spot.quality ?? "--"}</span>
-        </li>`
-    )
+          <span class="spot-reading">${currentHeight.toFixed(1)} ft • ${spot.currentQuality ?? spot.quality ?? "--"}${contributorMarkup}</span>
+        </li>`;
+    })
     .join("");
 }
 
@@ -657,25 +718,28 @@ function renderFrame(timestamp) {
   }
   const deltaMs = timestamp - renderFrame.lastTimestamp;
   renderFrame.lastTimestamp = timestamp;
-  resetRingEnergyCache(simState.rings);
   resetRingEnergyCacheStats();
-  const deltaHours = (deltaMs / 3600000) * getSimConfig().baseTimeAcceleration;
+  const deltaHours = computeClampedDeltaHours(deltaMs, getSimConfig().baseTimeAcceleration);
   advance(deltaHours);
 
   const clockSnapshot = getClockSnapshot();
+  const stormSnapshotBefore = getStormSnapshot();
   if (clockSnapshot.playing) {
-    updateRings(clockSnapshot.hours);
-    updateSpots();
+    updateRings(clockSnapshot.hours, stormSnapshotBefore);
+  }
+  const stormSnapshot = getStormSnapshot();
+  if (clockSnapshot.playing) {
+    updateSpots(stormSnapshot);
     renderSpotPanel();
   }
 
-  const stormSnapshot = getStormSnapshot();
   drawScene(ctx, { width: viewport.cssWidth, height: viewport.cssHeight }, {
     spots,
     storms: stormSnapshot.storms,
     selectedId: stormSnapshot.selectedId,
     rings: simState.rings,
-    measureOverlay: buildMeasureOverlay()
+    measureOverlay: buildMeasureOverlay(),
+    showRingSectors: showRingSectorOverlay
   });
   updateDiagnostics(deltaMs);
   animationId = requestAnimationFrame(renderFrame);
@@ -704,6 +768,7 @@ function buildMeasureOverlay() {
 }
 
 function updateDiagnostics(deltaMs) {
+  const stats = getRingEnergyCacheStats();
   if (frameTimeEl) {
     frameTimeEl.textContent = `${deltaMs.toFixed(1)}`;
   }
@@ -721,13 +786,22 @@ function updateDiagnostics(deltaMs) {
     ringCountEl.textContent = `${simState.rings.filter((ring) => ring.active).length}`;
   }
   if (cacheHitsEl || cacheMissesEl || cacheHitRateEl) {
-    const stats = getRingEnergyCacheStats();
     cacheHitsEl && (cacheHitsEl.textContent = `${stats.hits}`);
     cacheMissesEl && (cacheMissesEl.textContent = `${stats.misses}`);
     if (cacheHitRateEl) {
       const total = stats.hits + stats.misses;
       const rate = total > 0 ? ((stats.hits / total) * 100).toFixed(1) : "--";
       cacheHitRateEl.textContent = `${rate === "--" ? "--" : rate}%`;
+    }
+  }
+  if (diagnostics.fpsEma != null) {
+    const total = stats.hits + stats.misses;
+    const hitRateValue = total > 0 ? (stats.hits / total) * 100 : 0;
+    if (!fpsAlerted && diagnostics.fpsEma < 20) {
+      console.warn(`FPS < 20 (${diagnostics.fpsEma.toFixed(1)}). Rings=${simState.rings.length}, cacheHitRate=${hitRateValue.toFixed(1)}%`);
+      fpsAlerted = true;
+    } else if (fpsAlerted && diagnostics.fpsEma > 24) {
+      fpsAlerted = false;
     }
   }
 }
@@ -778,6 +852,7 @@ function init() {
   subscribeStorms(handleStormSnapshot);
   subscribeClock(handleClockSnapshot);
   subscribeScenarioStore(handleScenarioSnapshot);
+  subscribePlacementWarnings(handlePlacementWarning);
   handleStormSnapshot(getStormSnapshot());
   handleClockSnapshot(getClockSnapshot());
   handleScenarioSnapshot(scenarioStoreSnapshot());
@@ -788,6 +863,7 @@ function clearRings() {
   resetRingEnergyCache(simState.rings);
   resetRingEnergyCacheStats();
   simState.rings = [];
+  simState.lastMaxSpotHeight = 0;
 }
 
 function resetSimulationState() {
@@ -796,6 +872,9 @@ function resetSimulationState() {
   simState.rings = [];
   simState.stormEmissionTimes.clear();
   simState.lastUpdateHours = getClockSnapshot().hours;
+  simState.lastMaxSpotHeight = 0;
+  ringCapWarned = false;
+  handlePlacementWarning(null);
 }
 
 function handleVisibilityChange() {
