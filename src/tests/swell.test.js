@@ -118,6 +118,22 @@ describe("sampleSpotEnergy", () => {
     expect(value).toBeLessThanOrEqual(10);
   });
 
+  it("matches spot preferences based on incoming direction", () => {
+    const canvas = { width: 1000, height: 1000 };
+    const ring = createRing({ id: "dir", power: 4, active: true, headingDeg: 150 }, 0);
+    ring.radiusKm = MAX_RADIUS_KM * 0.2;
+    ring.x = 0.4;
+    ring.y = 0.3;
+    const spot = {
+      x: 0.5,
+      y: 0.5,
+      preferredMin: 300,
+      preferredMax: 330
+    };
+    const energy = sampleSpotEnergy(spot, [ring], canvas);
+    expect(energy).toBeGreaterThan(0);
+  });
+
   it("applies angular falloff", () => {
     const canvas = { width: 1200, height: 800 };
     const baseRing = () => {
@@ -129,8 +145,8 @@ describe("sampleSpotEnergy", () => {
       return ring;
     };
 
-    const insideSpot = { x: 0.5, y: 0.45, preferredMin: 0, preferredMax: 180 };
-    const outsideSpot = { x: 0.55, y: 0.5, preferredMin: 0, preferredMax: 180 };
+    const insideSpot = { x: 0.5, y: 0.45, preferredMin: 0, preferredMax: 359 };
+    const outsideSpot = { x: 0.55, y: 0.5, preferredMin: 0, preferredMax: 359 };
 
     const ring = baseRing();
     const insideEnergy = sampleSpotEnergy(insideSpot, [ring], canvas);

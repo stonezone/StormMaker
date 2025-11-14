@@ -93,7 +93,10 @@ export function sampleSpotEnergy(spot, rings, canvasSize) {
       const direction = bearingFromNorth(dxCss, dyCss);
       const sectorWeight = directionalFalloff(direction, ring.headingDeg ?? 0, halfSector);
       if (sectorWeight <= 0) return;
-      const preferredWeight = directionalWeight(direction, spot.preferredMin, spot.preferredMax);
+      // Spots define the compass direction waves arrive *from*, while the
+      // propagation direction we just computed points *toward* the spot.
+      const incomingDirection = (direction + 180) % 360;
+      const preferredWeight = directionalWeight(incomingDirection, spot.preferredMin, spot.preferredMax);
       total += getRingEnergyCached(ring) * sectorWeight * preferredWeight;
     }
   });
